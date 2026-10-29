@@ -1,6 +1,5 @@
 use anchor_lang::prelude::*;
 
-// These errors are used by the mandate instructions added in Milestone 2.
 #[error_code]
 pub enum ErrorCode {
     #[msg("Only the mandate sponsor can perform this action")]
@@ -19,14 +18,24 @@ pub enum ErrorCode {
     ExceedsTotalLimit,
     #[msg("Amount exceeds the daily spending cap")]
     ExceedsDailyLimit,
-    #[msg("Limits are invalid: all caps must be greater than zero and per-tx cannot exceed total")]
-    InvalidLimits,
+    #[msg("Per-transaction limit must be greater than zero")]
+    InvalidPerTransactionLimit,
+    #[msg("Total spend limit must be greater than zero")]
+    InvalidTotalSpendLimit,
+    #[msg("Per-transaction limit cannot exceed the total spend limit")]
+    PerTransactionLimitExceedsTotalLimit,
+    #[msg("Daily cap must be greater than zero")]
+    InvalidDailyCap,
     #[msg("Recipient is not on the mandate allowlist")]
     RecipientNotAllowed,
     #[msg("Too many allowed recipients")]
     TooManyRecipients,
     #[msg("Allowlist contains a duplicate or invalid recipient")]
     InvalidRecipient,
+    #[msg("Agent must be a non-default key different from the sponsor")]
+    InvalidAgent,
+    #[msg("Mint must not be the default (all-zero) address")]
+    InvalidMint,
     #[msg("Signer is not the agent authorized by this mandate")]
     AgentMismatch,
     #[msg("Arithmetic overflow")]
