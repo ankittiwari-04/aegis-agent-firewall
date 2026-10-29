@@ -14,3 +14,13 @@ pub struct MandateCreated {
     pub expires_at: i64,
     pub created_at: i64,
 }
+
+/// Emitted when a sponsor permanently revokes a mandate.
+#[event]
+pub struct MandateRevoked {
+    pub mandate: Pubkey,
+    pub sponsor: Pubkey,
+    pub agent: Pubkey,
+    pub mandate_id: u64,
+    pub revoked_at: i64,
+}

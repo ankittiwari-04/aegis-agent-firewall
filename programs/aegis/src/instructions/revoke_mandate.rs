@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-use crate::{constants::*, error::ErrorCode, state::AgentMandate};
+use crate::{constants::*, error::ErrorCode, events::MandateRevoked, state::AgentMandate};
 
 #[derive(Accounts)]
 pub struct RevokeMandate<'info> {
@@ -16,9 +16,27 @@ pub struct RevokeMandate<'info> {
     pub mandate: Account<'info, AgentMandate>,
 }
 
-/// Milestone 2A scaffold: fails closed on purpose.
-/// TODO (Milestone 2C): set revoked = true, update updated_at from Clock,
-/// emit MandateRevoked. Revocation is irreversible in this MVP.
-pub fn handle_revoke_mandate(_ctx: Context<RevokeMandate>) -> Result<()> {
-    err!(ErrorCode::NotImplemented)
+/// Permanently revokes a mandate. There is intentionally no way to undo this:
+/// nothing in the program ever sets `revoked` back to false, and the account is
+/// never closed, so it stays onchain as an audit record.
+pub fn handle_revoke_mandate(ctx: Context<RevokeMandate>) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    let mandate_key = ctx.accounts.mandate.key();
+    let mandate = &mut ctx.accounts.mandate;
+
+    // A repeat revoke fails instead of silently overwriting the original updated_at.
+    require!(!mandate.revoked, ErrorCode::MandateRevoked);
+
+    mandate.revoked = true;
+    mandate.updated_at = now;
+
+    emit!(MandateRevoked {
+        mandate: mandate_key,
+        sponsor: mandate.sponsor,
+        agent: mandate.agent,
+        mandate_id: mandate.mandate_id,
+        revoked_at: now,
+    });
+
+    Ok(())
 }
