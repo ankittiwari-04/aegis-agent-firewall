@@ -1,0 +1,26 @@
+{
+  "name": "aegis-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Policy gateway that evaluates Solana transactions against an Aegis AgentMandate before submission.",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "ts-mocha -p ./tsconfig.json --timeout 20000 \"tests/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@anchor-lang/core": "1.2.1",
+    "@solana/web3.js": "1.99.0"
+  },
+  "devDependencies": {
+    "@types/chai": "4.3.20",
+    "@types/mocha": "9.1.1",
+    "@types/node": "24.19.2",
+    "chai": "4.5.0",
+    "mocha": "9.2.2",
+    "ts-mocha": "10.1.0",
+    "typescript": "5.9.3"
+  }
+}
