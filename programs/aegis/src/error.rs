@@ -31,4 +31,6 @@ pub enum ErrorCode {
     AgentMismatch,
     #[msg("Arithmetic overflow")]
     MathOverflow,
+    #[msg("This instruction is not implemented yet")]
+    NotImplemented,
 }
