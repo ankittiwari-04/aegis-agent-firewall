@@ -24,3 +24,16 @@ pub struct MandateRevoked {
     pub mandate_id: u64,
     pub revoked_at: i64,
 }
+
+/// Emitted when a spend is recorded against a mandate.
+#[event]
+pub struct SpendRecorded {
+    pub mandate: Pubkey,
+    pub sponsor: Pubkey,
+    pub agent: Pubkey,
+    pub mandate_id: u64,
+    pub amount: u64,
+    /// Running total after this spend was added.
+    pub total_spent: u64,
+    pub recorded_at: i64,
+}
