@@ -4,6 +4,8 @@ import type { Cluster } from "./config";
 export * from "./types";
 export { DEFAULT_PROGRAM_ID, DEFAULT_RPC_URL, loadConfig } from "./config";
 export type { Cluster, GatewayConfig } from "./config";
+export { ACCOUNT_SIZE, MAX_ALLOWED_RECIPIENTS, MandateLoadError, getMandateStatus, loadMandate } from "./mandate";
+export type { AccountFetcher, LoadMandateOptions, MandateErrorCode, MandateStatus, RawAccount } from "./mandate";
 export { evaluateTransaction } from "./policy";
 
 export interface HealthStatus {

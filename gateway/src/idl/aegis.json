@@ -1,0 +1,667 @@
+{
+  "address": "5RiVTk3kzfvz1pn9NiMDjaR1x6Vom565W9pFzNwVK5Bp",
+  "metadata": {
+    "name": "aegis",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "initialize_mandate",
+      "discriminator": [
+        7,
+        251,
+        124,
+        114,
+        46,
+        104,
+        193,
+        22
+      ],
+      "accounts": [
+        {
+          "name": "sponsor",
+          "docs": [
+            "The human sponsor. Must sign and pays rent. Because the sponsor's key is part",
+            "of the PDA seeds, a mandate can only be created under the signer's own address."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "agent",
+          "docs": [
+            "or exist onchain; it is validated in the handler (not default, not the sponsor)."
+          ]
+        },
+        {
+          "name": "usdc_mint",
+          "docs": [
+            "mint in this milestone (TODO: validate with anchor-spl in a later phase)."
+          ]
+        },
+        {
+          "name": "mandate",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  110,
+                  100,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "sponsor"
+              },
+              {
+                "kind": "arg",
+                "path": "params.mandate_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "InitializeMandateParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "record_spend",
+      "discriminator": [
+        111,
+        102,
+        17,
+        64,
+        245,
+        202,
+        79,
+        55
+      ],
+      "accounts": [
+        {
+          "name": "sponsor",
+          "docs": [
+            "MVP LIMITATION: only the sponsor may record spend. The agent does not sign",
+            "anything yet, so this instruction is a ledger entry, not enforcement against",
+            "the agent. Agent-signed authorization (has_one = agent), recipient checks and",
+            "real token movement are added in a later milestone."
+          ],
+          "signer": true,
+          "relations": [
+            "mandate"
+          ]
+        },
+        {
+          "name": "mandate",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  110,
+                  100,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mandate.sponsor",
+                "account": "AgentMandate"
+              },
+              {
+                "kind": "account",
+                "path": "mandate.mandate_id",
+                "account": "AgentMandate"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "revoke_mandate",
+      "discriminator": [
+        252,
+        97,
+        140,
+        119,
+        67,
+        43,
+        177,
+        108
+      ],
+      "accounts": [
+        {
+          "name": "sponsor",
+          "docs": [
+            "Must be the sponsor stored in the mandate (enforced by has_one below)."
+          ],
+          "signer": true,
+          "relations": [
+            "mandate"
+          ]
+        },
+        {
+          "name": "mandate",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  110,
+                  100,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mandate.sponsor",
+                "account": "AgentMandate"
+              },
+              {
+                "kind": "account",
+                "path": "mandate.mandate_id",
+                "account": "AgentMandate"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "AgentMandate",
+      "discriminator": [
+        31,
+        231,
+        224,
+        237,
+        201,
+        149,
+        38,
+        235
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "MandateCreated",
+      "discriminator": [
+        140,
+        30,
+        209,
+        254,
+        5,
+        128,
+        147,
+        113
+      ]
+    },
+    {
+      "name": "MandateRevoked",
+      "discriminator": [
+        228,
+        111,
+        181,
+        60,
+        204,
+        58,
+        131,
+        28
+      ]
+    },
+    {
+      "name": "SpendRecorded",
+      "discriminator": [
+        126,
+        238,
+        76,
+        234,
+        130,
+        230,
+        173,
+        166
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Unauthorized",
+      "msg": "Only the mandate sponsor can perform this action"
+    },
+    {
+      "code": 6001,
+      "name": "MandateRevoked",
+      "msg": "Mandate has been revoked"
+    },
+    {
+      "code": 6002,
+      "name": "MandateExpired",
+      "msg": "Mandate has expired"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidExpiry",
+      "msg": "Expiry must be in the future"
+    },
+    {
+      "code": 6004,
+      "name": "InvalidAmount",
+      "msg": "Spend amount must be greater than zero"
+    },
+    {
+      "code": 6005,
+      "name": "ExceedsPerTxLimit",
+      "msg": "Amount exceeds the per-transaction limit"
+    },
+    {
+      "code": 6006,
+      "name": "ExceedsTotalLimit",
+      "msg": "Amount exceeds the remaining total allowance"
+    },
+    {
+      "code": 6007,
+      "name": "ExceedsDailyLimit",
+      "msg": "Amount exceeds the daily spending cap"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidPerTransactionLimit",
+      "msg": "Per-transaction limit must be greater than zero"
+    },
+    {
+      "code": 6009,
+      "name": "InvalidTotalSpendLimit",
+      "msg": "Total spend limit must be greater than zero"
+    },
+    {
+      "code": 6010,
+      "name": "PerTransactionLimitExceedsTotalLimit",
+      "msg": "Per-transaction limit cannot exceed the total spend limit"
+    },
+    {
+      "code": 6011,
+      "name": "InvalidDailyCap",
+      "msg": "Daily cap must be greater than zero"
+    },
+    {
+      "code": 6012,
+      "name": "RecipientNotAllowed",
+      "msg": "Recipient is not on the mandate allowlist"
+    },
+    {
+      "code": 6013,
+      "name": "TooManyRecipients",
+      "msg": "Too many allowed recipients"
+    },
+    {
+      "code": 6014,
+      "name": "InvalidRecipient",
+      "msg": "Allowlist contains a duplicate or invalid recipient"
+    },
+    {
+      "code": 6015,
+      "name": "InvalidAgent",
+      "msg": "Agent must be a non-default key different from the sponsor"
+    },
+    {
+      "code": 6016,
+      "name": "InvalidMint",
+      "msg": "Mint must not be the default (all-zero) address"
+    },
+    {
+      "code": 6017,
+      "name": "AgentMismatch",
+      "msg": "Signer is not the agent authorized by this mandate"
+    },
+    {
+      "code": 6018,
+      "name": "MathOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6019,
+      "name": "NotImplemented",
+      "msg": "This instruction is not implemented yet"
+    }
+  ],
+  "types": [
+    {
+      "name": "AgentMandate",
+      "docs": [
+        "A scoped, revocable spending mandate that a human sponsor issues to one agent.",
+        "",
+        "This is a separate onchain authorization object. It never gives the agent",
+        "control of the sponsor's wallet; it only describes what the agent may spend.",
+        "",
+        "PDA seeds: [\"mandate\", sponsor, mandate_id.to_le_bytes()]",
+        "",
+        "All amounts are in base units of `usdc_mint` (for USDC with 6 decimals,",
+        "1_000_000 = 1 USDC). All timestamps are unix seconds from the Clock sysvar."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "sponsor",
+            "docs": [
+              "Human owner. Only this key may create, revoke or update the mandate."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "agent",
+            "docs": [
+              "The one key authorized to spend under this mandate."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "mandate_id",
+            "docs": [
+              "Sponsor-chosen ID; part of the PDA seeds so one sponsor can hold many mandates."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "usdc_mint",
+            "docs": [
+              "The single token mint this mandate covers."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "max_per_tx",
+            "docs": [
+              "Maximum amount for any single transaction."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "max_total",
+            "docs": [
+              "Maximum lifetime spend under this mandate."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_spent",
+            "docs": [
+              "Running total already spent. Only ever increased, using checked math."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "daily_cap",
+            "docs": [
+              "Maximum spend per day bucket."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "daily_spent",
+            "docs": [
+              "Amount spent in the day bucket recorded in `current_day`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "current_day",
+            "docs": [
+              "Day bucket (unix_timestamp / 86_400) of the last recorded spend.",
+              "When the bucket changes, `daily_spent` resets to zero."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "expires_at",
+            "docs": [
+              "Unix timestamp after which the mandate can no longer be used."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "revoked",
+            "docs": [
+              "Kill switch. Once true, the mandate can never be used again."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "allowed_recipients",
+            "docs": [
+              "Wallets the agent may pay. Capped at 5 for the MVP; the account is",
+              "allocated at full size, so there is no reallocation to get wrong."
+            ],
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "updated_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "InitializeMandateParams",
+      "docs": [
+        "Arguments for creating a mandate. All amounts are in base units of the mint.",
+        "The agent and the mint are passed as accounts, not arguments."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mandate_id",
+            "type": "u64"
+          },
+          {
+            "name": "max_per_tx",
+            "type": "u64"
+          },
+          {
+            "name": "max_total",
+            "type": "u64"
+          },
+          {
+            "name": "daily_cap",
+            "type": "u64"
+          },
+          {
+            "name": "expires_at",
+            "type": "i64"
+          },
+          {
+            "name": "allowed_recipients",
+            "type": {
+              "vec": "pubkey"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "MandateCreated",
+      "docs": [
+        "Emitted when a sponsor creates a new mandate."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mandate",
+            "type": "pubkey"
+          },
+          {
+            "name": "sponsor",
+            "type": "pubkey"
+          },
+          {
+            "name": "agent",
+            "type": "pubkey"
+          },
+          {
+            "name": "usdc_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "mandate_id",
+            "type": "u64"
+          },
+          {
+            "name": "max_per_tx",
+            "type": "u64"
+          },
+          {
+            "name": "max_total",
+            "type": "u64"
+          },
+          {
+            "name": "daily_cap",
+            "type": "u64"
+          },
+          {
+            "name": "expires_at",
+            "type": "i64"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MandateRevoked",
+      "docs": [
+        "Emitted when a sponsor permanently revokes a mandate."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mandate",
+            "type": "pubkey"
+          },
+          {
+            "name": "sponsor",
+            "type": "pubkey"
+          },
+          {
+            "name": "agent",
+            "type": "pubkey"
+          },
+          {
+            "name": "mandate_id",
+            "type": "u64"
+          },
+          {
+            "name": "revoked_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SpendRecorded",
+      "docs": [
+        "Emitted when a spend is recorded against a mandate."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mandate",
+            "type": "pubkey"
+          },
+          {
+            "name": "sponsor",
+            "type": "pubkey"
+          },
+          {
+            "name": "agent",
+            "type": "pubkey"
+          },
+          {
+            "name": "mandate_id",
+            "type": "u64"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "total_spent",
+            "docs": [
+              "Running total after this spend was added."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "recorded_at",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ],
+  "constants": [
+    {
+      "name": "MANDATE_SEED",
+      "docs": [
+        "PDA seed prefix. Full seeds: [\"mandate\", sponsor pubkey, mandate_id as u64 little-endian bytes]."
+      ],
+      "type": "bytes",
+      "value": "[109, 97, 110, 100, 97, 116, 101]"
+    }
+  ]
+}

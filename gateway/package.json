@@ -6,9 +6,10 @@
   "license": "MIT",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && mkdir -p dist/idl && cp src/idl/aegis.json dist/idl/aegis.json",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "ts-mocha -p ./tsconfig.json --timeout 20000 \"tests/**/*.test.ts\""
+    "test": "ts-mocha -p ./tsconfig.json --timeout 20000 \"tests/**/*.test.ts\"",
+    "sync-idl": "mkdir -p src/idl && cp ../target/idl/aegis.json src/idl/aegis.json"
   },
   "dependencies": {
     "@anchor-lang/core": "1.2.1",
