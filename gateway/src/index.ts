@@ -7,6 +7,15 @@ export type { Cluster, GatewayConfig } from "./config";
 export { ACCOUNT_SIZE, MAX_ALLOWED_RECIPIENTS, MandateLoadError, getMandateStatus, loadMandate } from "./mandate";
 export type { AccountFetcher, LoadMandateOptions, MandateErrorCode, MandateStatus, RawAccount } from "./mandate";
 export { evaluateTransaction } from "./policy";
+export {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  COMPUTE_BUDGET_PROGRAM_ID,
+  MAX_TRANSACTION_BYTES,
+  SYSTEM_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  decodeTransaction,
+} from "./transaction";
 
 export interface HealthStatus {
   status: "ok";
