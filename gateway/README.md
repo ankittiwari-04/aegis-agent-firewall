@@ -7,7 +7,8 @@ Policy gateway that evaluates a serialized Solana transaction against an Aegis `
 - 3A (done): scaffold, config validation, health check.
 - 3B (done): mandate loader (`loadMandate`) and `getMandateStatus`.
 - 3C (done): transaction decoder (`decodeTransaction`).
-- 3D (next): policy engine. Until 3D, `evaluateTransaction` denies everything.
+- 3D-1 (done): policy engine (`evaluateTransaction`), unit-tested on a fake chain.
+- 3D-2 (next): live check against Surfpool, including the real account size.
 
 ## Security properties
 
@@ -47,6 +48,33 @@ What it recognizes: System `Transfer` (SOL transfer) and `Assign` (authority cha
 
 Amounts are `bigint`. `JSON.stringify` throws on bigint, so convert to strings before serializing a decoded transaction.
 
+## Policy engine
+
+`evaluateTransaction(input, options?)` loads the mandate, reads the chain clock, decodes the transaction and returns an `ALLOW` or `DENY` decision. It never throws and never signs or submits anything. `input` is `{ mandateAddress, transactionBase64 }` and nothing else is read from it. `options` (`nowSeconds`, `fetchAccount`, `config`) is for tests and wiring: `nowSeconds` is never taken from the request, because whoever controls the clock controls expiry.
+
+Order of checks. The first failure is the `reason`; transaction-level findings are all listed in `riskFlags`:
+
+    1. input shape; mandate: invalid address, missing, wrong owner, corrupt, revoked
+    2. chain Clock sysvar; expired (now >= expiry)
+    3. decode: invalid base64, malformed, address lookup tables
+    4. unrecognized instructions, authority changes, approvals, no transfer at all
+    5. each transfer: asset, agent, mint, destination owner, allowlist, per-transaction cap, remaining allowance
+    6. all transfers together: per-transaction cap and remaining allowance
+
+ALLOW is produced in exactly one place, after every condition was positively established. Anything unknown, unresolved or ambiguous is a DENY.
+
+Decisions worth knowing:
+
+- SOL transfers are denied (`UNSUPPORTED_ASSET`): mandate limits are in token base units, so lamports cannot be compared with them.
+- The sum of all transfers must be within the per-transaction cap, so a transfer cannot be split to evade it.
+- Every SPL transfer must be authorized by the mandate's agent, which must sign (`AGENT_MISMATCH`).
+- SPL destinations are token accounts. The gateway fetches each one, checks its owning program and mint, and compares its owner wallet with the allowlist. Anything it cannot verify is `TOKEN_ACCOUNT_OWNER_UNRESOLVED`.
+- A plain `Transfer` names no mint: it is taken from the destination account and must equal the mandate's mint.
+- Token-2022 transfers are allowed only when the mandate's mint has no extensions (an 82-byte mint account). Otherwise: `TOKEN_2022_EXTENSIONS_UNRESOLVED`.
+- No transfer detected is a DENY (`NO_POLICY_RELEVANT_TRANSFER`), never a blanket approval.
+
+Risk flags: `INVALID_INPUT`, `INTERNAL_ERROR`, `INVALID_MANDATE_ADDRESS`, `MANDATE_NOT_FOUND`, `MANDATE_RPC_ERROR`, `MANDATE_WRONG_OWNER`, `MANDATE_CORRUPT`, `MANDATE_REVOKED`, `MANDATE_EXPIRED`, `CLOCK_UNAVAILABLE`, `INVALID_BASE64`, `MALFORMED_TRANSACTION`, `LOOKUP_TABLE_UNRESOLVED`, `UNRECOGNIZED_INSTRUCTION`, `AUTHORITY_CHANGE_DETECTED`, `APPROVAL_DETECTED`, `NO_POLICY_RELEVANT_TRANSFER`, `UNSUPPORTED_ASSET`, `AGENT_MISMATCH`, `MINT_MISMATCH`, `TOKEN_ACCOUNT_OWNER_UNRESOLVED`, `TOKEN_2022_EXTENSIONS_UNRESOLVED`, `UNKNOWN_RECIPIENT`, `AMOUNT_EXCEEDS_PER_TRANSACTION_LIMIT`, `AMOUNT_EXCEEDS_REMAINING_ALLOWANCE`, `COMBINED_EXCEEDS_PER_TRANSACTION_LIMIT`, `COMBINED_EXCEEDS_REMAINING_ALLOWANCE`.
+
 ## Known limitations
 
 - No live-chain test yet: the loader is tested on byte-exact accounts, not on an account read from a running validator. This also means the assumed account size of 350 bytes (8 + 342, from the Rust unit test) has not been read off a real account. Both are planned for 3D.
@@ -57,6 +85,10 @@ Amounts are `bigint`. `JSON.stringify` throws on bigint, so convert to strings b
 - Not analyzed (preserved and flagged as unrecognized): System `TransferWithSeed`, `CreateAccount` and nonce operations; Token `CloseAccount`, `Burn`, `MintTo` and others; the Associated Token Program; Memo; Token-2022 extension instructions. Compute Budget data, including priority fees, is not analyzed.
 - SPL transfer destinations are token account addresses. The destination owner, and the mint of a plain `Transfer`, are unresolved until account data is fetched. Token-2022 support is base-instruction decoding only: transfer fees, hooks and confidential transfers are not evaluated.
 - Signatures are counted but not verified: the gateway evaluates what is about to be signed.
+- Allowance consumption is not tracked: the gateway reads `total_spent` but nothing updates it when a transaction is allowed, so the same remaining allowance can be approved repeatedly. Fixing this needs the program's `record_spend` in the flow or a reservation step.
+- Destination owners, the mint and the clock are read at check time over RPC (trusted: localnet or devnet only). A token account's owner can change before the transaction lands.
+- No simulation yet: effects that only show up when a transaction runs are not seen.
+- Recipient allowlist, agent and amount limits are enforced by the gateway only; the program does not enforce them.
 
 ## Configuration
 

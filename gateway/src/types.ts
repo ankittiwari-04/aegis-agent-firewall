@@ -7,11 +7,20 @@ export type TransferSummary = {
   /** Base units as a decimal string. Never a JS number: u64 amounts can exceed 2^53. */
   amount: string;
   mint?: string;
+  instructionIndex?: number;
+  programId?: string;
+  /** The account that authorizes the transfer (owner, delegate or multisig for SPL transfers). */
+  authority?: string;
+  /** SPL transfers: the wallet that owns the destination token account, resolved from chain data. */
+  destinationOwner?: string;
 };
 
 export type TransactionSummary = {
-  transfers: TransferSummary[];
+  transactionType: TransactionKind;
   programIds: string[];
+  transfers: TransferSummary[];
+  authorityChanges: PolicyAuthorityChange[];
+  unrecognizedInstructions: UnrecognizedInstructionSummary[];
 };
 
 export type PolicyDecision = {
@@ -161,3 +170,40 @@ export type DecodedTransaction = {
   /** Empty when valid. Each entry starts with a machine-readable code, for example "INVALID_BASE64: ...". */
   errors: string[];
 };
+
+// ---------------------------------------------------------------------------------------------
+// Policy engine (Milestone 3D)
+// ---------------------------------------------------------------------------------------------
+
+/** JSON-safe version of AuthorityChangeSummary: the approval amount is a decimal string, not a bigint. */
+export type PolicyAuthorityChange = Omit<AuthorityChangeSummary, "amount"> & { amount?: string };
+
+/** Machine-readable reasons for a DENY. An ALLOW decision has none. */
+export type RiskFlag =
+  | "INVALID_INPUT"
+  | "INTERNAL_ERROR"
+  | "INVALID_MANDATE_ADDRESS"
+  | "MANDATE_NOT_FOUND"
+  | "MANDATE_RPC_ERROR"
+  | "MANDATE_WRONG_OWNER"
+  | "MANDATE_CORRUPT"
+  | "MANDATE_REVOKED"
+  | "MANDATE_EXPIRED"
+  | "CLOCK_UNAVAILABLE"
+  | "INVALID_BASE64"
+  | "MALFORMED_TRANSACTION"
+  | "LOOKUP_TABLE_UNRESOLVED"
+  | "UNRECOGNIZED_INSTRUCTION"
+  | "AUTHORITY_CHANGE_DETECTED"
+  | "APPROVAL_DETECTED"
+  | "NO_POLICY_RELEVANT_TRANSFER"
+  | "UNSUPPORTED_ASSET"
+  | "AGENT_MISMATCH"
+  | "MINT_MISMATCH"
+  | "TOKEN_ACCOUNT_OWNER_UNRESOLVED"
+  | "TOKEN_2022_EXTENSIONS_UNRESOLVED"
+  | "UNKNOWN_RECIPIENT"
+  | "AMOUNT_EXCEEDS_PER_TRANSACTION_LIMIT"
+  | "AMOUNT_EXCEEDS_REMAINING_ALLOWANCE"
+  | "COMBINED_EXCEEDS_PER_TRANSACTION_LIMIT"
+  | "COMBINED_EXCEEDS_REMAINING_ALLOWANCE";

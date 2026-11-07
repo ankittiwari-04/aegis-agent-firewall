@@ -7,6 +7,8 @@ export type { Cluster, GatewayConfig } from "./config";
 export { ACCOUNT_SIZE, MAX_ALLOWED_RECIPIENTS, MandateLoadError, getMandateStatus, loadMandate } from "./mandate";
 export type { AccountFetcher, LoadMandateOptions, MandateErrorCode, MandateStatus, RawAccount } from "./mandate";
 export { evaluateTransaction } from "./policy";
+export type { EvaluateOptions } from "./policy";
+export { readChainTime } from "./clock";
 export {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   COMPUTE_BUDGET_PROGRAM_ID,

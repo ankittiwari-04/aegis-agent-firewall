@@ -78,7 +78,7 @@ function parseAddress(address: unknown): PublicKey {
   return key;
 }
 
-function connectionFetcher(config: GatewayConfig): AccountFetcher {
+export function connectionFetcher(config: GatewayConfig): AccountFetcher {
   const connection = new Connection(config.rpcUrl, "confirmed");
   return (address) => connection.getAccountInfo(address, "confirmed");
 }
