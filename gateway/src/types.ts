@@ -30,6 +30,8 @@ export type PolicyDecision = {
   mandateAddress: string;
   checkedAt: string;
   transactionSummary: TransactionSummary;
+  /** Present when the transaction reached simulation. Only otherwise-allowed transactions do. */
+  simulation?: SimulationResult;
 };
 
 export type EvaluateTransactionInput = {
@@ -206,4 +208,36 @@ export type RiskFlag =
   | "AMOUNT_EXCEEDS_PER_TRANSACTION_LIMIT"
   | "AMOUNT_EXCEEDS_REMAINING_ALLOWANCE"
   | "COMBINED_EXCEEDS_PER_TRANSACTION_LIMIT"
-  | "COMBINED_EXCEEDS_REMAINING_ALLOWANCE";
+  | "COMBINED_EXCEEDS_REMAINING_ALLOWANCE"
+  | "SIMULATION_FAILED"
+  | "SIMULATION_UNAVAILABLE"
+  | "UNEXPECTED_ACCOUNT_MUTATION"
+  | "RECEIPT_STORE_FAILED";
+
+// ---------------------------------------------------------------------------------------------
+// Simulation (Milestone 4A)
+// ---------------------------------------------------------------------------------------------
+
+export type SimulationStatus = "NOT_RUN" | "SUCCESS" | "FAILED" | "UNAVAILABLE" | "UNEXPECTED_MUTATION";
+
+export type AccountChange = {
+  address: string;
+  /** What changed: "token amount", "lamports", "owner", "executable", "data" or "account" (created or closed). */
+  field: string;
+  before: string;
+  after: string;
+  expected: boolean;
+};
+
+/** JSON-safe outcome of simulating a transaction. Only SUCCESS can lead to ALLOW. */
+export type SimulationResult = {
+  status: SimulationStatus;
+  error: string | null;
+  logs: string[];
+  logsTruncated: boolean;
+  /** Compute units consumed, as a decimal string. */
+  unitsConsumed: string | null;
+  accountsChecked: number;
+  accountChanges: AccountChange[];
+  unexpectedChanges: string[];
+};

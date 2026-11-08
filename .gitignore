@@ -16,3 +16,6 @@ id.json
 
 # Build output
 dist
+
+# Local audit receipts (JSON lines): never commit
+gateway/receipts/

@@ -30,8 +30,25 @@ import {
 import { expect } from "chai";
 import * as fs from "fs";
 import * as path from "path";
-import { ACCOUNT_SIZE, evaluateTransaction, loadConfig, readChainTime } from "../src";
-import type { AccountFetcher, EvaluateTransactionInput, PolicyDecision, RawAccount } from "../src";
+import {
+  ACCOUNT_SIZE,
+  MemoryReceiptStore,
+  POLICY_VERSION,
+  evaluateTransaction,
+  evaluateWithReceipt,
+  hashSummary,
+  loadConfig,
+  readChainTime,
+} from "../src";
+import type {
+  AccountFetcher,
+  DecisionReceipt,
+  EvaluateOptions,
+  EvaluateTransactionInput,
+  PolicyDecision,
+  RawAccount,
+  ReceiptStore,
+} from "../src";
 import {
   ACCOUNT_STATE_INITIALIZED,
   ACCOUNT_TYPE_ACCOUNT,
@@ -41,6 +58,8 @@ import {
   isPlainMint,
   parseTokenAccount,
 } from "../src/tokenAccounts";
+import { bankBackend } from "./helpers/simBackend";
+import type { BankHooks, Provider } from "./helpers/simBackend";
 
 // The chain is faked behind the injected account fetcher, so these tests need no validator.
 // Mandate bytes are laid out by hand from the Rust struct; token accounts and mints are encoded
@@ -218,7 +237,7 @@ function lookupTableTx(): string {
 async function run(chain: Chain, tx: string, nowSeconds: bigint = CHECK_TIME): Promise<PolicyDecision> {
   return evaluateTransaction(
     { mandateAddress: chain.address, transactionBase64: tx },
-    { nowSeconds, fetchAccount: chain.fetchAccount, config }
+    { nowSeconds, fetchAccount: chain.fetchAccount, config, simulationBackend: bankBackend(providerFor(chain)) }
   );
 }
 
@@ -363,6 +382,9 @@ describe("evaluateTransaction: allowed transactions", () => {
 
   it("allows u64-maximum amounts when the limits allow them", async () => {
     const chain = makeChain({ maxPerTx: U64_MAX, maxTotal: U64_MAX, totalSpent: 0n });
+    const empty = tokenAccountData(RECIPIENT);
+    empty.writeBigUInt64LE(0n, 64); // a real chain rejects a transfer that would overflow the destination
+    chain.accounts.set(b58(DEST), { owner: SPL_TOKEN_ID, data: empty });
     expectAllow(await run(chain, spl(U64_MAX)));
   });
 });
@@ -397,7 +419,7 @@ describe("evaluateTransaction: mandate and clock denials", () => {
     const chain = makeChain();
     const d = await evaluateTransaction(
       { mandateAddress: "not-a-key", transactionBase64: spl(1n) },
-      { nowSeconds: CHECK_TIME, fetchAccount: chain.fetchAccount, config }
+      { nowSeconds: CHECK_TIME, fetchAccount: chain.fetchAccount, config, simulationBackend: bankBackend(providerFor(chain)) }
     );
     expectDeny(d, ["INVALID_MANDATE_ADDRESS"]);
     expect(chain.calls).to.deep.equal([]);
@@ -425,7 +447,7 @@ describe("evaluateTransaction: mandate and clock denials", () => {
     const go = (chain: Chain) =>
       evaluateTransaction(
         { mandateAddress: chain.address, transactionBase64: spl(1n) },
-        { fetchAccount: chain.fetchAccount, config }
+        { fetchAccount: chain.fetchAccount, config, simulationBackend: bankBackend(providerFor(chain)) }
       );
     expectAllow(await go(withClock(CHECK_TIME)));
     expectDeny(await go(withClock(EXPIRES_AT)), ["MANDATE_EXPIRED"]);
@@ -652,7 +674,7 @@ describe("evaluateTransaction: input handling and decision shape", () => {
     for (const b of bad) {
       let d: PolicyDecision | undefined;
       try {
-        d = await evaluateTransaction(b as EvaluateTransactionInput, { fetchAccount: chain.fetchAccount, config });
+        d = await evaluateTransaction(b as EvaluateTransactionInput, { fetchAccount: chain.fetchAccount, config, simulationBackend: bankBackend(providerFor(chain)) });
       } catch (e) {
         expect.fail(`evaluateTransaction threw: ${String(e)}`);
       }
@@ -665,7 +687,7 @@ describe("evaluateTransaction: input handling and decision shape", () => {
     const chain = makeChain();
     const d = await evaluateTransaction(
       { mandateAddress: chain.address, transactionBase64: spl(1n) },
-      { nowSeconds: 5 as unknown as bigint, fetchAccount: chain.fetchAccount, config }
+      { nowSeconds: 5 as unknown as bigint, fetchAccount: chain.fetchAccount, config, simulationBackend: bankBackend(providerFor(chain)) }
     );
     expectDeny(d, ["INVALID_INPUT"]);
   });
@@ -675,7 +697,9 @@ describe("evaluateTransaction: input handling and decision shape", () => {
     const deny = await run(makeChain(), txBase64(AGENT, [checked(5n), createApproveInstruction(SRC, STRANGER, AGENT, 5n)]));
     for (const d of [allow, deny]) {
       expect(Object.keys(d).sort()).to.deep.equal(
-        ["checkedAt", "decision", "mandateAddress", "reason", "riskFlags", "transactionSummary"]
+        d.decision === "ALLOW"
+          ? ["checkedAt", "decision", "mandateAddress", "reason", "riskFlags", "simulation", "transactionSummary"]
+          : ["checkedAt", "decision", "mandateAddress", "reason", "riskFlags", "transactionSummary"]
       );
       expect(Object.keys(d.transactionSummary).sort()).to.deep.equal(
         ["authorityChanges", "programIds", "transactionType", "transfers", "unrecognizedInstructions"]
@@ -685,5 +709,270 @@ describe("evaluateTransaction: input handling and decision shape", () => {
     }
     expect(allow.decision).to.equal("ALLOW");
     expect(deny.decision).to.equal("DENY");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Simulation and receipts (Milestone 4A)
+// ---------------------------------------------------------------------------------------------
+
+/** Account state for the fake bank: the chain's known accounts, the agent's source token account, and wallets. */
+function providerFor(chain: Chain): Provider {
+  return (address) => {
+    const known = chain.accounts.get(address);
+    if (known) {
+      return { lamports: 1_000_000_000n, owner: known.owner.toBase58(), executable: false, data: Buffer.from(known.data) };
+    }
+    if (address === b58(SRC)) {
+      const data = tokenAccountData(AGENT);
+      data.writeBigUInt64LE(U64_MAX, 64);
+      const dest = chain.accounts.get(b58(DEST));
+      return {
+        lamports: 1_000_000_000n,
+        owner: dest ? dest.owner.toBase58() : b58(SPL_TOKEN_ID),
+        executable: false,
+        data,
+      };
+    }
+    return { lamports: 10_000_000_000n, owner: b58(SystemProgram.programId), executable: false, data: Buffer.alloc(0) };
+  };
+}
+
+describe("evaluateTransaction: simulation before approval", () => {
+  const goodTx = () => spl(5_000_000n);
+
+  async function runWith(
+    chain: Chain,
+    hooks: BankHooks = {},
+    extra: Partial<EvaluateOptions> = {},
+    tx: string = goodTx()
+  ) {
+    const backend = bankBackend(providerFor(chain), hooks);
+    const decision = await evaluateTransaction(
+      { mandateAddress: chain.address, transactionBase64: tx },
+      { nowSeconds: CHECK_TIME, fetchAccount: chain.fetchAccount, config, simulationBackend: backend, ...extra }
+    );
+    return { decision, backend };
+  }
+
+  it("allows only after a clean simulation, and attaches logs, compute units and account changes", async () => {
+    const { decision, backend } = await runWith(makeChain());
+    expectAllow(decision);
+    expect(backend.calls).to.deep.equal({ getAccounts: 1, simulate: 1 });
+    const sim = decision.simulation;
+    expect(sim?.status).to.equal("SUCCESS");
+    expect(sim?.logs).to.deep.equal(["Program log: ok"]);
+    expect(sim?.unitsConsumed).to.equal("4321");
+    expect(sim?.unexpectedChanges).to.deep.equal([]);
+    expect(sim?.accountChanges.filter((c) => c.field === "token amount")).to.have.length(2);
+    expect(JSON.parse(JSON.stringify(decision))).to.deep.equal(decision);
+  });
+
+  it("denies when the simulation fails", async () => {
+    const { decision } = await runWith(makeChain(), { fail: { InstructionError: [0, "InsufficientFunds"] } });
+    expectDeny(decision, ["SIMULATION_FAILED"]);
+    expect(decision.reason).to.match(/^Simulation failed: /);
+    expect(decision.simulation?.status).to.equal("FAILED");
+    expect(decision.transactionSummary.transfers).to.have.length(1);
+  });
+
+  it("denies when the simulation reveals an unexpected account mutation", async () => {
+    const { decision } = await runWith(makeChain(), {
+      mutate: (post) => {
+        const d = post.get(b58(DEST));
+        if (d) d.owner = b58(STRANGER);
+      },
+    });
+    expectDeny(decision, ["UNEXPECTED_ACCOUNT_MUTATION"]);
+    expect(decision.reason).to.match(/changed accounts unexpectedly/);
+    expect(decision.simulation?.status).to.equal("UNEXPECTED_MUTATION");
+    expect(decision.simulation?.unexpectedChanges[0]).to.include(b58(DEST));
+  });
+
+  it("denies when the simulation cannot be completed, without leaking the error", async () => {
+    const { decision } = await runWith(makeChain(), { throwOnSimulate: true });
+    expectDeny(decision, ["SIMULATION_UNAVAILABLE"]);
+    expect(decision.simulation?.status).to.equal("UNAVAILABLE");
+    expect(JSON.stringify(decision)).to.not.include("secret");
+  });
+
+  it("honors the fee limit option and rejects an invalid one", async () => {
+    const tight = await runWith(makeChain(), {}, { maxFeeLamports: 1_000n });
+    expectDeny(tight.decision, ["UNEXPECTED_ACCOUNT_MUTATION"]);
+    const negative = await runWith(makeChain(), {}, { maxFeeLamports: -1n });
+    expectDeny(negative.decision, ["INVALID_INPUT"]);
+    expect(negative.backend.calls.simulate).to.equal(0);
+    const notBigint = await runWith(makeChain(), {}, { maxFeeLamports: 5 as unknown as bigint });
+    expectDeny(notBigint.decision, ["INVALID_INPUT"]);
+  });
+
+  it("does not simulate a transaction that was already denied", async () => {
+    const cases: Array<[string, Chain, string]> = [
+      ["revoked mandate", makeChain({ revoked: 1 }), goodTx()],
+      ["unrecognized instruction", makeChain(), txBase64(AGENT, [checked(5n), unknownIx()])],
+      ["amount above the limit", makeChain(), spl(100_000_001n)],
+      ["unknown recipient", makeChain(), spl(5n, DEST_STRANGER)],
+    ];
+    for (const [label, chain, tx] of cases) {
+      const { decision, backend } = await runWith(chain, {}, {}, tx);
+      expect(decision.decision, label).to.equal("DENY");
+      expect(decision.simulation, label).to.equal(undefined);
+      expect(backend.calls, label).to.deep.equal({ getAccounts: 0, simulate: 0 });
+    }
+  });
+});
+
+describe("decision receipts", () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  const evalWith = (
+    chain: Chain,
+    store?: ReceiptStore,
+    tx: string = spl(5_000_000n),
+    address: string = chain.address
+  ) =>
+    evaluateWithReceipt(
+      { mandateAddress: address, transactionBase64: tx },
+      {
+        nowSeconds: CHECK_TIME,
+        fetchAccount: chain.fetchAccount,
+        config,
+        simulationBackend: bankBackend(providerFor(chain)),
+        ...(store ? { receiptStore: store } : {}),
+      }
+    );
+
+  it("creates a complete receipt for an ALLOW and stores it", async () => {
+    const chain = makeChain();
+    const store = new MemoryReceiptStore();
+    const { decision, receipt } = await evalWith(chain, store);
+    expectAllow(decision);
+    expect(Object.keys(receipt).sort()).to.deep.equal([
+      "agent", "checkedAt", "decision", "mandateAddress", "policyVersion", "reason",
+      "receiptId", "receiptVersion", "riskFlags", "simulation", "sponsor", "transactionSummaryHash",
+    ]);
+    expect(receipt).to.include({
+      receiptVersion: 1, policyVersion: POLICY_VERSION, mandateAddress: chain.address,
+      agent: b58(AGENT), sponsor: b58(SPONSOR), decision: "ALLOW",
+      reason: decision.reason, checkedAt: decision.checkedAt,
+    });
+    expect(receipt.riskFlags).to.deep.equal([]);
+    expect(receipt.transactionSummaryHash).to.match(/^[0-9a-f]{64}$/);
+    expect(receipt.transactionSummaryHash).to.equal(hashSummary(decision.transactionSummary));
+    expect(receipt.receiptId).to.match(UUID);
+    expect(receipt.simulation.status).to.equal("SUCCESS");
+    expect(receipt.simulation).to.deep.equal(decision.simulation);
+    expect(store.list()).to.deep.equal([receipt]);
+  });
+
+  it("creates a receipt for every DENY too, with the simulation marked NOT_RUN when it was never reached", async () => {
+    const store = new MemoryReceiptStore();
+    const scenarios: Array<[string, Chain, string]> = [
+      ["revoked mandate", makeChain({ revoked: 1 }), spl(5n)],
+      ["unknown recipient", makeChain(), spl(5n, DEST_STRANGER)],
+      ["over the limit", makeChain(), spl(100_000_001n)],
+      ["approval", makeChain(), txBase64(AGENT, [createApproveInstruction(SRC, STRANGER, AGENT, 5n)])],
+    ];
+    const ids = new Set<string>();
+    for (const [label, chain, tx] of scenarios) {
+      const { decision, receipt } = await evalWith(chain, store, tx);
+      expect(decision.decision, label).to.equal("DENY");
+      expect(receipt.decision, label).to.equal("DENY");
+      expect(receipt.riskFlags, label).to.deep.equal(decision.riskFlags);
+      expect(receipt.reason, label).to.equal(decision.reason);
+      expect(receipt.agent, label).to.equal(b58(AGENT));
+      expect(receipt.sponsor, label).to.equal(b58(SPONSOR));
+      expect(receipt.simulation.status, label).to.equal("NOT_RUN");
+      expect(receipt.transactionSummaryHash, label).to.equal(hashSummary(decision.transactionSummary));
+      ids.add(receipt.receiptId);
+    }
+    expect(ids.size).to.equal(scenarios.length);
+    expect(store.list()).to.have.length(scenarios.length);
+  });
+
+  it("records simulation denials with the simulation result", async () => {
+    const chain = makeChain();
+    const store = new MemoryReceiptStore();
+    const { decision, receipt } = await evaluateWithReceipt(
+      { mandateAddress: chain.address, transactionBase64: spl(5n) },
+      {
+        nowSeconds: CHECK_TIME,
+        fetchAccount: chain.fetchAccount,
+        config,
+        simulationBackend: bankBackend(providerFor(chain), { fail: "AccountNotFound" }),
+        receiptStore: store,
+      }
+    );
+    expectDeny(decision, ["SIMULATION_FAILED"]);
+    expect(receipt.simulation.status).to.equal("FAILED");
+    expect(receipt.simulation.error).to.equal("AccountNotFound");
+  });
+
+  it("records agent and sponsor as null when the mandate could not be loaded", async () => {
+    const chain = makeChain();
+    const store = new MemoryReceiptStore();
+    const { decision, receipt } = await evalWith(chain, store, spl(5n), "not-a-key");
+    expectDeny(decision, ["INVALID_MANDATE_ADDRESS"]);
+    expect(receipt.agent).to.equal(null);
+    expect(receipt.sponsor).to.equal(null);
+    expect(receipt.mandateAddress).to.equal("not-a-key");
+    expect(receipt.simulation.status).to.equal("NOT_RUN");
+    expect(store.list()).to.have.length(1);
+  });
+
+  it("stores receipts from evaluateTransaction too when a store is supplied", async () => {
+    const chain = makeChain();
+    const store = new MemoryReceiptStore();
+    const d = await evaluateTransaction(
+      { mandateAddress: chain.address, transactionBase64: spl(5n) },
+      {
+        nowSeconds: CHECK_TIME,
+        fetchAccount: chain.fetchAccount,
+        config,
+        simulationBackend: bankBackend(providerFor(chain)),
+        receiptStore: store,
+      }
+    );
+    expectAllow(d);
+    expect(store.list()).to.have.length(1);
+  });
+
+  it("turns an ALLOW into a DENY when its receipt cannot be stored: no receipt, no approval", async () => {
+    const chain = makeChain();
+    const stored: DecisionReceipt[] = [];
+    let attempts = 0;
+    const flaky: ReceiptStore = {
+      append(r) {
+        attempts += 1;
+        if (attempts === 1) throw new Error("disk full http://user:secret@127.0.0.1:8899");
+        stored.push(r);
+      },
+      list: () => stored,
+    };
+    const { decision, receipt } = await evalWith(chain, flaky);
+    expectDeny(decision, ["RECEIPT_STORE_FAILED"]);
+    expect(decision.simulation?.status).to.equal("SUCCESS");
+    expect(receipt.decision).to.equal("DENY");
+    expect(receipt.riskFlags).to.deep.equal(["RECEIPT_STORE_FAILED"]);
+    expect(stored).to.deep.equal([receipt]);
+    expect(JSON.stringify(decision)).to.not.include("secret");
+    expect(JSON.stringify(receipt)).to.not.include("secret");
+  });
+
+  it("still returns a DENY receipt when the store keeps failing", async () => {
+    const chain = makeChain();
+    const broken: ReceiptStore = {
+      append() {
+        throw new Error("read-only file system");
+      },
+      list: () => [],
+    };
+    const allowed = await evalWith(chain, broken);
+    expectDeny(allowed.decision, ["RECEIPT_STORE_FAILED"]);
+    expect(allowed.receipt.decision).to.equal("DENY");
+
+    const denied = await evalWith(makeChain({ revoked: 1 }), broken);
+    expectDeny(denied.decision, ["MANDATE_REVOKED"]);
+    expect(denied.receipt.decision).to.equal("DENY");
   });
 });

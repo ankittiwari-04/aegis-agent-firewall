@@ -5,6 +5,10 @@ import type { GatewayConfig } from "./config";
 import { MandateLoadError, connectionFetcher, getMandateStatus, loadMandate } from "./mandate";
 import type { AccountFetcher, MandateErrorCode, RawAccount } from "./mandate";
 import { isPlainMint, parseTokenAccount } from "./tokenAccounts";
+import { buildReceipt } from "./receipt";
+import type { DecisionReceipt, ReceiptStore } from "./receipt";
+import { DEFAULT_MAX_FEE_LAMPORTS, connectionSimulationBackend, runSimulation } from "./simulation";
+import type { SimulationBackend } from "./simulation";
 import { TOKEN_2022_PROGRAM_ID, decodeTransaction } from "./transaction";
 import type {
   AuthorityChangeSummary,
@@ -16,6 +20,7 @@ import type {
   PolicyDecision,
   RiskFlag,
   TransactionSummary,
+  SimulationResult,
   TransferSummary,
 } from "./types";
 
@@ -24,6 +29,16 @@ export interface EvaluateOptions {
   nowSeconds?: bigint;
   fetchAccount?: AccountFetcher;
   config?: GatewayConfig;
+  /** Simulation backend. Defaults to the configured RPC. Tests inject a fake. */
+  simulationBackend?: SimulationBackend;
+  /** Largest fee-payer lamport decrease treated as an expected fee. Default 1,000,000. */
+  maxFeeLamports?: bigint;
+  /** Where decision receipts are stored. If omitted, receipts are returned but not stored. */
+  receiptStore?: ReceiptStore;
+}
+
+interface EvalContext {
+  mandate: NormalizedMandate | null;
 }
 
 interface Finding {
@@ -70,22 +85,65 @@ export async function evaluateTransaction(
   input: EvaluateTransactionInput,
   options: EvaluateOptions = {}
 ): Promise<PolicyDecision> {
+  return (await evaluateWithReceipt(input, options)).decision;
+}
+
+export interface EvaluationOutcome {
+  decision: PolicyDecision;
+  receipt: DecisionReceipt;
+}
+
+/**
+ * Like evaluateTransaction, but also returns the audit receipt. Every decision, ALLOW or DENY,
+ * gets a receipt; if `options.receiptStore` is given it is stored there. If an ALLOW's receipt
+ * cannot be stored the decision becomes a DENY: no receipt, no approval. Never throws.
+ */
+export async function evaluateWithReceipt(
+  input: EvaluateTransactionInput,
+  options: EvaluateOptions = {}
+): Promise<EvaluationOutcome> {
+  const ctx: EvalContext = { mandate: null };
+  let decision: PolicyDecision;
   try {
-    return await evaluate(input, options);
+    decision = await evaluate(input, options, ctx);
   } catch {
-    return deny(
+    decision = deny(
       echoAddress(input),
       [{ flag: "INTERNAL_ERROR", reason: "Policy evaluation failed unexpectedly; denying" }],
       emptySummary()
     );
   }
+
+  let receipt = buildReceipt(decision, ctx.mandate);
+  const store = typeof options === "object" && options !== null ? options.receiptStore : undefined;
+  if (store !== undefined) {
+    try {
+      await store.append(receipt);
+    } catch {
+      if (decision.decision === "ALLOW") {
+        const denied = deny(
+          decision.mandateAddress,
+          [{ flag: "RECEIPT_STORE_FAILED", reason: "Audit receipt could not be stored; denying" }],
+          decision.transactionSummary
+        );
+        decision = decision.simulation !== undefined ? { ...denied, simulation: decision.simulation } : denied;
+        receipt = buildReceipt(decision, ctx.mandate);
+        try {
+          await store.append(receipt);
+        } catch {
+          // Nothing more can be done: the decision is already a DENY.
+        }
+      }
+    }
+  }
+  return { decision, receipt };
 }
 
 // ---------------------------------------------------------------------------------------------
 // Evaluation
 // ---------------------------------------------------------------------------------------------
 
-async function evaluate(raw: unknown, options: EvaluateOptions): Promise<PolicyDecision> {
+async function evaluate(raw: unknown, options: EvaluateOptions, ctx: EvalContext): Promise<PolicyDecision> {
   const opts: EvaluateOptions = typeof options === "object" && options !== null ? options : {};
 
   if (typeof raw !== "object" || raw === null) {
@@ -122,6 +180,7 @@ async function evaluate(raw: unknown, options: EvaluateOptions): Promise<PolicyD
     }
     throw e;
   }
+  ctx.mandate = mandate;
   if (mandate.revoked) {
     return deny(mandateAddress, [{ flag: "MANDATE_REVOKED", reason: "Mandate has been revoked" }], emptySummary());
   }
@@ -291,6 +350,17 @@ async function evaluate(raw: unknown, options: EvaluateOptions): Promise<PolicyD
       summary
     );
   }
+  // 7. Simulate before the final approval. Anything but a clean, expected result is a DENY.
+  const maxFee = opts.maxFeeLamports ?? DEFAULT_MAX_FEE_LAMPORTS;
+  if (typeof maxFee !== "bigint" || maxFee < 0n) {
+    return deny(mandateAddress, [invalidInput("maxFeeLamports must be a non-negative bigint")], summary);
+  }
+  const backend = opts.simulationBackend ?? connectionSimulationBackend(config);
+  const simulation = await runSimulation({ transactionBase64, decoded, backend, maxFeeLamports: maxFee });
+  if (simulation.status !== "SUCCESS") {
+    return { ...deny(mandateAddress, [simulationFinding(simulation)], summary), simulation };
+  }
+
   return {
     decision: "ALLOW",
     reason: `All ${decoded.transfers.length} transfer(s) go to allowlisted recipients and are within the mandate limits`,
@@ -298,6 +368,7 @@ async function evaluate(raw: unknown, options: EvaluateOptions): Promise<PolicyD
     mandateAddress,
     checkedAt: new Date().toISOString(),
     transactionSummary: summary,
+    simulation,
   };
 }
 
@@ -398,4 +469,21 @@ function toTransferSummary(t: DecodedTransfer, resolved?: Resolved): TransferSum
 function toAuthorityChange(c: AuthorityChangeSummary): PolicyAuthorityChange {
   const { amount, ...rest } = c;
   return amount === undefined ? rest : { ...rest, amount: amount.toString() };
+}
+
+function simulationFinding(s: SimulationResult): Finding {
+  switch (s.status) {
+    case "FAILED":
+      return { flag: "SIMULATION_FAILED", reason: `Simulation failed: ${s.error ?? "unknown error"}` };
+    case "UNEXPECTED_MUTATION":
+      return {
+        flag: "UNEXPECTED_ACCOUNT_MUTATION",
+        reason: `Simulation changed accounts unexpectedly: ${s.unexpectedChanges[0] ?? "unknown change"}`,
+      };
+    default:
+      return {
+        flag: "SIMULATION_UNAVAILABLE",
+        reason: `Simulation could not be completed: ${s.error ?? "unknown error"}`,
+      };
+  }
 }

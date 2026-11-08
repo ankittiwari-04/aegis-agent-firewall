@@ -36,3 +36,23 @@ export function health(env: Record<string, string | undefined> = process.env): H
     programId: config.programId.toBase58(),
   };
 }
+
+export { evaluateWithReceipt } from "./policy";
+export type { EvaluationOutcome } from "./policy";
+export { DEFAULT_MAX_FEE_LAMPORTS, connectionSimulationBackend, runSimulation } from "./simulation";
+export type {
+  AccountSnapshot,
+  RawSimulatedAccount,
+  RawSimulation,
+  RunSimulationArgs,
+  SimulationBackend,
+} from "./simulation";
+export {
+  JsonlReceiptStore,
+  MemoryReceiptStore,
+  POLICY_VERSION,
+  buildReceipt,
+  canonicalJson,
+  hashSummary,
+} from "./receipt";
+export type { DecisionReceipt, ReceiptStore } from "./receipt";
